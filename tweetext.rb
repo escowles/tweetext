@@ -3,32 +3,30 @@
 require 'highline'
 require 'inifile'
 require 'rbconfig'
-
-# config
-#  load config from ~/Library/Application Support/twtxt/config
-#    [twtxt] basic app config
-#    twtfile: file to post tweets to
-#    post_tweet_hook: command to run after posting a tweet
-#    use_pager: whether or not to page timeline
-#    sorting: sort timeline asc or desc
-#    *check_following: ???
-#    *twurl: where my twtxt is published
-#    *nick: nick i use for myself
-#    [following]: list of nick = twxturls
-#
-# commands:
-#   following: list who i'm following
-#   follow: add nick = url to [following] section
-#   unfollow: remove someone from list
-#   tweet: post a tweet
-#   timeline: show list of tweets
+require 'rest-client'
 
 def config
   @config ||= IniFile.load(config_file)
 end
 
+def main_config
+  config['twtxt'] || {}
+end
+
 def tweetfile
-  config['twtxt']['twtfile']
+  main_config['twtfile']
+end
+
+def timeline_limit
+  main_config['limit_timeline'] || 20
+end
+
+def timeline_sort
+  main_config['sorting'] || 'descending'
+end
+
+def my_info
+  { main_config['nick'] => main_config['twturl'] }
 end
 
 def config_file
@@ -86,21 +84,87 @@ end
 
 # command to run after posting a tweet
 def post_tweet_hook
-  exec config['twtxt']['post_tweet_hook']
+  exec main_config['post_tweet_hook'] if main_config['post_tweet_hook']
 end
 
 # timeline: show list of tweets
 def timeline
-  # XXX
+  tweets = []
+  following.merge(my_info).each do |nick,url|
+    tweets.concat timeline_for_user(nick,url)
+  end
+  tweeets = tweets[-timeline_limit, timeline_limit].sort_by { |h| h[:date] }
+  (timeline_sort == 'descending') ? tweets.reverse : tweets
+end
+
+def timeline_for_user(nick, url)
+  RestClient.get(url).split("\n").map do |line|
+    parts = line.split("\t")
+    { from: nick, date: parts[0], text: parts[1] }
+  end
 end
 
 # quickstart: wizard to create initial config
 def quickstart
-  # XXX
+  if File.exist?(config_file)
+    puts "config file already exists: #{config_file}"
+    return
+  end
+
+  cli = HighLine.new
+  nick = cli.ask("Username:")
+  file = cli.ask("Full local path to twtxt file:")
+  url = cli.ask("URL where txtxt will be published:")
+  open(config_file, 'w') do |f|
+    f.puts "[twtxt]"
+    f.puts "nick = #{nick}"
+    f.puts "twturl = #{url}"
+    f.puts "twtfile = #{file}"
+    f.puts "#check_following = True"
+    f.puts "#use_pager = False"
+    f.puts "#limit_timeline = 20"
+    f.puts "#sorting = descending"
+    f.puts "#post_tweet_hook = \"scp tw.txt bob@example.com:~/public_html/twtxt.txt\""
+  end
+  puts "example config written to #{config_file}"
 end
 
-#unfollow ARGV[0]
-#puts following
-tweet(ARGV[0])
+def usage
+puts <<"USAGE"
+usage: tweetext command [args]
 
-# XXX impl command line parsing and display
+a ruby reimplementation of twtxt
+
+commands:
+  follow [nick] [twturl]  follow a new user
+  following               list users you are following
+  quickstart              generate a basic configuration
+  timeline                show your timeline
+  tweet [text] (date)     post a tweet (optional: date to use instead of now)
+  unfollow [nick]         unfollow a user
+
+USAGE
+end
+
+# command line options
+if ARGV[0] == 'follow' && ARGV[1] && ARGV[2]
+  follow ARGV[1], ARGV[2]
+elsif ARGV[0] == 'following'
+  following.sort.each do |nick, url|
+    puts "#{nick} @ #{url}"
+  end
+elsif ARGV[0] == 'quickstart'
+  quickstart
+elsif ARGV[0] == 'timeline'
+  timeline.each do |tweet|
+    puts "#{tweet[:from]} (#{tweet[:date]}):"
+    puts tweet[:text]
+    puts
+  end
+elsif ARGV[0] == 'tweet' && ARGV[1]
+  tweet ARGV[1], ARGV[2]
+elsif ARGV[0] == 'unfollow' && ARGV[1]
+  unfollow ARGV[1]
+else
+  usage
+end
