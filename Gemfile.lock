@@ -1,0 +1,15 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    highline (1.7.8)
+    inifile (3.0.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  highline
+  inifile
+
+BUNDLED WITH
+   1.11.2
